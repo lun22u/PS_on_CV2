@@ -490,6 +490,7 @@ def tkImage():
 
 top = tk.Tk()
 top.title('美颜')
+top.resizable(False, False)
 top.geometry('602x800')
 top.configure(bg='lightcyan')
 image_width = 600
