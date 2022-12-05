@@ -181,10 +181,10 @@ def Face(_img, face):
 
 def process(src):
     global times, history, idx, now, white, skin, face
-    if times == 0 and not os.path.exists('./default.csv'):  # 首次使用，赋予一定初始值
-        white = 25
-        skin = 25
-        face = 25
+    if times == 0 and not os.path.exists('./default.csv'):  # 首次使用，默认值为0
+        white = 0
+        skin = 0
+        face = 0
         scale1.set(white)
         scale2.set(skin)
         scale3.set(face)
@@ -192,7 +192,7 @@ def process(src):
         history[idx][1] = skin
         history[idx][2] = face
         times = 1
-    elif times == 0 and os.path.exists('./default.csv'):
+    elif times == 0 and os.path.exists('./default.csv'):  # 已有保存，按照保存读取
         df = pd.read_csv('./default.csv')
         white = df.iat[0, 0]
         skin = df.iat[1, 0]
@@ -279,10 +279,15 @@ def redo():
 # 一键美颜
 def quick():
     global history, idx, now, white, skin, face
-    df = pd.read_csv('./default.csv')
-    white = df.iat[0, 0]
-    skin = df.iat[1, 0]
-    face = df.iat[2, 0]
+    if os.path.exists('./default.csv'):
+        df = pd.read_csv('./default.csv')
+        white = df.iat[0, 0]
+        skin = df.iat[1, 0]
+        face = df.iat[2, 0]
+    else:
+        white = 25
+        skin = 25
+        face = 25
     scale1.set(white)
     scale2.set(skin)
     scale3.set(face)
@@ -491,7 +496,7 @@ def tkImage():
 top = tk.Tk()
 top.title('美颜')
 top.resizable(False, False)
-top.geometry('602x800')
+top.geometry('602x800+'+str((top.winfo_screenwidth()-602)//2)+'+'+str((top.winfo_screenheight()-800)//2-20))
 top.configure(bg='lightcyan')
 image_width = 600
 image_height = 480
