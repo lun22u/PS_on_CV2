@@ -13,7 +13,7 @@ from PIL import Image, ImageTk, ImageEnhance  # 图像控件
 
 cap = cv2.VideoCapture(0)  # 创建摄像头对象
 global history, idx, now, limit, white, skin, face, count, count2, times, twhite, tskin, tface
-limit = 100
+limit = 1000
 history = [[0 for i in range(3)] for i in range(limit)]
 idx, now, white, skin, face, count, count2, times, twhite, tskin, tface = 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
 
