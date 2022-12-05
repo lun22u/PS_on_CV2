@@ -3,12 +3,13 @@ import os
 import tkinter as tk
 from tkinter import *
 from tkinter import filedialog
-
 import cv2
 import dlib
 import numpy as np
 import pandas as pd
+from numba import jit
 from PIL import Image, ImageTk, ImageEnhance  # 图像控件
+
 
 cap = cv2.VideoCapture(0)  # 创建摄像头对象
 global history, idx, now, limit, white, skin, face, count, count2, times, twhite, tskin, tface
@@ -17,7 +18,10 @@ history = [[0 for i in range(3)] for i in range(limit)]
 idx, now, white, skin, face, count, count2, times, twhite, tskin, tface = 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
 
 
+@jit
 def White(img, value):
+    if value == 0:
+        return img
     midtones_add = np.zeros(256)
     for i in range(256):
         midtones_add[i] = 0.667 * (1 - ((i - 127) / 127) * ((i - 127) / 127))
@@ -38,7 +42,10 @@ def White(img, value):
     return img
 
 
+
 def Skin(img_, a):
+    if a == 0:
+        return img_
     img = img_
     blur_img = cv2.bilateralFilter(img, 31, a, a)
     # 图像融合
@@ -89,6 +96,7 @@ def landmark_dec_dlib_fun(img_src):
 
 
 # Interactive Image Warping 局部平移算法
+
 def localTranslationWarp(srcImg, startX, startY, endX, endY, radius):
     ddradius = float(radius * radius)
     copyImg = np.zeros(srcImg.shape, np.uint8)
@@ -145,7 +153,9 @@ def BilinearInsert(src, ux, uy):
 
 # 瘦脸
 def Face(_img, face):
-    face = face / 150 + 1
+    if face == 0:
+        return _img
+    face = face / 80
     landmarks = landmark_dec_dlib_fun(_img)
 
     thin_image = _img
@@ -209,6 +219,7 @@ def process(src):
         history[idx][1] = skin
         history[idx][2] = face
         times = 1
+
     dst = src
     # TODO
     # 美白  use white
@@ -218,7 +229,7 @@ def process(src):
     dst = Skin(dst, skin)
 
     # 修脸  use face
-    # dst = Face(dst, face)
+    #  dst = Face(dst, face)
 
     return dst
 
@@ -488,6 +499,7 @@ def tkImage():
     pilImage = Image.fromarray(np.uint8(cvimage))
     pilImage = pilImage.resize((image_width, image_height), Image.ANTIALIAS)
     tkImage = ImageTk.PhotoImage(image=pilImage)
+
     return tkImage
 
 
