@@ -1,21 +1,176 @@
-# 删掉了与原图对比，与暂时关闭美颜功能重复，且长按功能在电脑操作不是很方便
-# 关闭美颜状态后，不可使用撤销和重做
-
 import cv2
 import numpy as np
 import tkinter as tk
 from tkinter import *
 from tkinter import filedialog
-from PIL import Image, ImageTk #图像控件
+from PIL import Image, ImageTk, ImageEnhance #图像控件
 import pandas as pd
 import csv
+import math
+import dlib
 import os
 
 cap = cv2.VideoCapture(0) #创建摄像头对象
-global history, idx, now, limit, white, skin, face, count, count2, times
+global history, idx, now, limit, white, skin, face, count, count2, times, twhite, tskin, tface
 limit = 100
 history = [ [ 0 for i in range (3)] for i in range (limit)]
-idx, now, white, skin, face, count, count2, times = 0, 0, 0, 0, 0, 0, 0, 0
+idx, now, white, skin, face, count, count2, times, twhite, tskin, tface = 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+
+def White(img, a):
+    img0 = img
+    infmg_1 = np.zeros(img.shape, np.uint8)
+    infmg_2 = np.zeros(img.shape, np.uint8)
+    infmg_3 = np.zeros(img.shape, np.uint8)
+    infmg_4 = np.zeros(img.shape, np.uint8)
+    if not (a == 0):
+        cv2.bilateralFilter(img0, int(a / 10), a, a, infmg_1)
+        dst1 = infmg_1 - img0 + 128
+        infmg_2 = cv2.GaussianBlur(dst1, (1, 1), 0, 0)
+        infmg_3 = img0 + 2 * infmg_2 - 255
+        infmg_4 = cv2.addWeighted(img0, 0.2, infmg_3, 0.8, 0)
+        img0 = cv2.add(img0, infmg_4)  # img是原图，infmg_4是最终滤波的结果
+    return img0
+
+def Skin(img_, a):
+    img = img_
+    blur_img = cv2.bilateralFilter(img, 31, a, a)
+    # 图像融合
+    # result_img = cv2.addWeighted(img, a, blur_img, 1-a, 0)
+    # cv2.imwrite("58_1.jpg", result_img)
+    img_1 = cv2.addWeighted(img, 0.5, blur_img, 0.5, 0)
+    # image = Image.open("58_1.jpg")
+    # 锐度调节
+    img_mid = Image.fromarray(cv2.cvtColor(img_1, cv2.COLOR_BGR2RGB))
+    enh_img = ImageEnhance.Sharpness(img_mid)
+    image_sharped = enh_img.enhance(1.5)
+    # 对比度调节
+    con_img = ImageEnhance.Contrast(image_sharped)
+    image_con = con_img.enhance(1.15)
+    image_res = np.array(image_con)
+    image_res = cv2.cvtColor(image_res, cv2.COLOR_RGB2BGR)
+    return image_res
+
+predictor_path='./shape_predictor_68_face_landmarks.dat'
+
+#使用dlib自带的frontal_face_detector作为我们的特征提取器
+detector = dlib.get_frontal_face_detector()
+predictor = dlib.shape_predictor(predictor_path)
+def landmark_dec_dlib_fun(img_src):
+    img_gray = cv2.cvtColor(img_src, cv2.COLOR_BGR2GRAY)
+
+    land_marks = []
+
+    rects = detector(img_gray, 0)
+
+    for i in range(len(rects)):
+        land_marks_node = np.matrix([[p.x, p.y] for p in predictor(img_gray, rects[i]).parts()])
+        # for idx,point in enumerate(land_marks_node):
+        #     # 68点坐标
+        #     pos = (point[0,0],point[0,1])
+        #     print(idx,pos)
+        #     # 利用cv2.circle给每个特征点画一个圈，共68个
+        #     cv2.circle(img_src, pos, 5, color=(0, 255, 0))
+        #     # 利用cv2.putText输出1-68
+        #     font = cv2.FONT_HERSHEY_SIMPLEX
+        #     cv2.putText(img_src, str(idx + 1), pos, font, 0.8, (0, 0, 255), 1, cv2.LINE_AA)
+        land_marks.append(land_marks_node)
+
+    return land_marks
+
+
+# Interactive Image Warping 局部平移算法
+def localTranslationWarp(srcImg, startX, startY, endX, endY, radius):
+    ddradius = float(radius * radius)
+    copyImg = np.zeros(srcImg.shape, np.uint8)
+    copyImg = srcImg.copy()
+
+    # 计算公式中的|m-c|^2
+    ddmc = (endX - startX) * (endX - startX) + (endY - startY) * (endY - startY)
+    H, W, C = srcImg.shape
+    for i in range(W):
+        for j in range(H):
+            # 计算该点是否在形变圆的范围之内
+            # 优化，第一步，直接判断是会在（startX,startY)的矩阵框中
+            if math.fabs(i - startX) > radius and math.fabs(j - startY) > radius:
+                continue
+
+            distance = (i - startX) * (i - startX) + (j - startY) * (j - startY)
+
+            if (distance < ddradius):
+                # 计算出（i,j）坐标的原坐标
+                # 计算公式中右边平方号里的部分
+                ratio = (ddradius - distance) / (ddradius - distance + ddmc)
+                ratio = ratio * ratio
+
+                # 映射原位置
+                UX = i - ratio * (endX - startX)
+                UY = j - ratio * (endY - startY)
+
+                # 根据双线性插值法得到UX，UY的值
+                value = BilinearInsert(srcImg, UX, UY)
+                # 改变当前 i ，j的值
+                copyImg[j, i] = value
+
+    return copyImg
+
+
+# 双线性插值法
+def BilinearInsert(src, ux, uy):
+    w, h, c = src.shape
+    if c == 3:
+        x1 = int(ux)
+        x2 = x1 + 1
+        y1 = int(uy)
+        y2 = y1 + 1
+
+        part1 = src[y1, x1].astype(np.float) * (float(x2) - ux) * (float(y2) - uy)
+        part2 = src[y1, x2].astype(np.float) * (ux - float(x1)) * (float(y2) - uy)
+        part3 = src[y2, x1].astype(np.float) * (float(x2) - ux) * (uy - float(y1))
+        part4 = src[y2, x2].astype(np.float) * (ux - float(x1)) * (uy - float(y1))
+
+        insertValue = part1 + part2 + part3 + part4
+
+        return insertValue.astype(np.int8)
+
+# 瘦脸
+def Face(_img, face):
+    face = face / 150 + 1
+    landmarks = landmark_dec_dlib_fun(_img)
+
+    thin_image = _img
+    # 如果未检测到人脸关键点，就不进行瘦脸
+    if len(landmarks) == 0:
+        return _img
+
+    for landmarks_node in landmarks:
+        left_landmark = landmarks_node[3]
+        left_landmark_down = landmarks_node[5]
+
+        right_landmark = landmarks_node[13]
+        right_landmark_down = landmarks_node[15]
+
+        endPt = landmarks_node[30]
+
+        # 计算第4个点到第6个点的距离作为瘦脸距离
+        r_left = math.sqrt(
+            (left_landmark[0, 0] - left_landmark_down[0, 0]) * (left_landmark[0, 0] - left_landmark_down[0, 0]) +
+            (left_landmark[0, 1] - left_landmark_down[0, 1]) * (left_landmark[0, 1] - left_landmark_down[0, 1]))
+
+        # 计算第14个点到第16个点的距离作为瘦脸距离
+        r_right = math.sqrt(
+            (right_landmark[0, 0] - right_landmark_down[0, 0]) * (right_landmark[0, 0] - right_landmark_down[0, 0]) +
+            (right_landmark[0, 1] - right_landmark_down[0, 1]) * (right_landmark[0, 1] - right_landmark_down[0, 1]))
+
+        r_left *= face
+        r_right *= face
+
+        # 瘦左边脸
+        thin_image = localTranslationWarp(_img, left_landmark[0, 0], left_landmark[0, 1], endPt[0, 0], endPt[0, 1],
+                                          r_left)
+        # 瘦右边脸
+        thin_image = localTranslationWarp(thin_image, right_landmark[0, 0], right_landmark[0, 1], endPt[0, 0],
+                                          endPt[0, 1], r_right)
+    return thin_image
 
 def process(src):
   global times, history, idx, now, white, skin, face
@@ -45,30 +200,43 @@ def process(src):
   dst = src
   # TODO
   # 美白  use white
+  dst = White(dst, white)
 
   # 磨皮  use skin
+  dst = Skin(dst, skin)
 
   # 修脸  use face
+  #dst = Face(dst, face)
+
   return dst
 
 # 关闭美颜状态
 def close():
-  global count
+  global count, twhite, tskin, tface, white, skin, face
   if count == 0:
+    twhite = white
+    tskin = skin
+    tface = face
+    white = 0
+    skin = 0
+    face = 0
     scale1.set(0)
     scale2.set(0)
     scale3.set(0)
-    button1.configure(image=img2)
-    button2.configure(state='disabled', image=img3)
-    button3.configure(state='disabled', image=img3)
+    button1.configure(image=imgclose2)
+    button2.configure(state='disabled', image=imgleft2)
+    button3.configure(state='disabled', image=imgright2)
     label_hint.place(x=490, y=0)
   elif count == 1:
+    white = twhite
+    skin = tskin
+    face = tface
     scale1.set(white)
     scale2.set(skin)
     scale3.set(face)
-    button1.configure(image=img1)
-    button2.configure(state='normal', image=img1)
-    button3.configure(state='normal', image=img1)
+    button1.configure(image=imgclose)
+    button2.configure(state='normal', image=imgleft1)
+    button3.configure(state='normal', image=imgright1)
     label_hint.place_forget()
   count = 1 - count
 
@@ -186,21 +354,55 @@ def get_values3(event):
 
 def wheel1(event):
   if event.delta > 0:
-    scale1.set(scale1.get()+1)
+    scale1.set(scale1.get()+10)
   else:
-    scale1.set(scale1.get()-1)
+    scale1.set(scale1.get()-10)
+  global white, history, idx, now
+  temp = white
+  white = scale1.get()
+  if temp != white:
+    if now != idx:
+      idx = now
+    idx += 1
+    now += 1
+    history[idx][0] = white
+    history[idx][1] = skin
+    history[idx][2] = face
+  
 
 def wheel2(event):
   if event.delta > 0:
-    scale2.set(scale2.get()+1)
+    scale2.set(scale2.get()+10)
   else:
-    scale2.set(scale2.get()-1)
+    scale2.set(scale2.get()-10)
+  global skin, history, idx, now
+  temp = skin
+  skin = scale2.get()
+  if temp != skin:
+    if now != idx:
+      idx = now
+    idx += 1
+    now += 1
+    history[idx][0] = white
+    history[idx][1] = skin
+    history[idx][2] = face
 
 def wheel3(event):
   if event.delta > 0:
-    scale3.set(scale3.get()+1)
+    scale3.set(scale3.get()+10)
   else:
-    scale3.set(scale3.get()-1)
+    scale3.set(scale3.get()-10)
+  global face, history, idx, now
+  temp = face
+  face = scale3.get()
+  if temp != face:
+    if now != idx:
+      idx = now
+    idx += 1
+    now += 1
+    history[idx][0] = white
+    history[idx][1] = skin
+    history[idx][2] = face
 
 #对该控件的定义
 class ToolTip(object):
@@ -274,17 +476,26 @@ label_hint.place_forget()
 img1=PhotoImage(file='./img/btn.png')
 img2=PhotoImage(file='./img/btn2.png')
 img3=PhotoImage(file='./img/btn3.png')
-button1 = Button(top, text='×', font=14, image=img1, compound='center', command=lambda:close()) 
+imgsave=PhotoImage(file='./img/saveimage.png')
+imgclose=PhotoImage(file='./img/close.png')
+imgclose2=PhotoImage(file='./img/close2.png')
+imgreset=PhotoImage(file='./img/reset.png')
+imgleft1=PhotoImage(file='./img/left1.png')
+imgleft2=PhotoImage(file='./img/left2.png')
+imgright1=PhotoImage(file='./img/right1.png')
+imgright2=PhotoImage(file='./img/right2.png')
+
+button1 = Button(top, font=14, image=imgclose, compound='center', command=lambda:close()) 
 button1.place(x=60, y=750)
 button1.configure(relief='flat', bd=0, bg='lightcyan', activebackground='lightcyan')
 CreateToolTip(button1, '暂时关闭/开启')
 
-button2 = Button(top, text='←', font=14, image=img1, compound='center', command=lambda:undo())
+button2 = Button(top, font=14, image=imgleft1, compound='center', command=lambda:undo())
 button2.place(x=120, y=750)
 button2.configure(relief='flat', bd=0, bg=top['bg'], activebackground=top['bg'])
 CreateToolTip(button2, '撤销')
 
-button3 = Button(top, text='→', font=14, image=img1, compound='center', command=lambda:redo())
+button3 = Button(top, font=14, image=imgright1, compound='center', command=lambda:redo())
 button3.place(x=180, y=750)
 button3.configure(relief='flat', bd=0, bg=top['bg'], activebackground=top['bg'])
 CreateToolTip(button3, '重做')
@@ -294,12 +505,12 @@ button5.place(x=420, y=750)
 button5.configure(relief='flat', bd=0, bg=top['bg'], activebackground=top['bg'])
 CreateToolTip(button5, '一键美颜')
 
-button6 = Button(top, text='🗑', font=14, image=img1, compound='center', command=lambda:reset())
+button6 = Button(top, font=14, image=imgreset, compound='center', command=lambda:reset())
 button6.place(x=480, y=750)
 button6.configure(relief='flat', bd=0, bg=top['bg'], activebackground=top['bg'])
 CreateToolTip(button6, '重置')
 
-button7 = Button(top, text='💾', font=14, image=img1, compound='center', command=lambda:save())
+button7 = Button(top, font=14, image=imgsave, compound='center', command=lambda:save())
 button7.place(x=540, y=750)
 button7.configure(relief='flat', bd=0, bg=top['bg'], activebackground=top['bg'])
 CreateToolTip(button7, '保存')
